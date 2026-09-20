@@ -134,7 +134,7 @@ routes = {
 app = FastAPI(
     title="Multi-Chain Gas Oracle",
     description="Live gas prices across Base, Ethereum, Arbitrum, and Optimism, plus ETH price, block number, and gas prediction. Paid via x402 on Base mainnet.",
-    version="1.3.0",
+    version="1.4.0",
     contact={"email": "gas@optical.example"},
 )
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
@@ -148,6 +148,26 @@ CHAINS = {
 
 # In-memory ring buffer of recent Base gas samples for trend prediction.
 GAS_HISTORY: deque = deque(maxlen=60)  # ~last 60 samples
+
+# Short-lived response cache so agents get sub-200ms replies without hammering RPCs.
+CACHE_TTL = 8  # seconds
+_cache: dict = {}
+
+
+def _cache_get(key: str):
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+    value, expires = entry
+    if time.time() >= expires:
+        _cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_set(key: str, value, ttl: float = CACHE_TTL):
+    _cache[key] = (value, time.time() + ttl)
+    return value
 
 
 async def fetch_gas_gwei(rpc: str) -> float:
@@ -192,6 +212,9 @@ async def fetch_base_fee_gwei() -> float | None:
 
 @app.get("/gas")
 async def gas():
+    cached = _cache_get("gas")
+    if cached is not None:
+        return cached
     result = {}
     for name, rpc in CHAINS.items():
         try:
@@ -201,25 +224,34 @@ async def gas():
                 GAS_HISTORY.append({"t": time.time(), "gwei": gwei})
         except Exception:
             result[name] = None
-    return {**result, "timestamp": int(time.time())}
+    payload = {**result, "timestamp": int(time.time())}
+    return _cache_set("gas", payload)
 
 
 @app.get("/eth-price")
 async def eth_price():
+    cached = _cache_get("eth-price")
+    if cached is not None:
+        return cached
     try:
         usd = await fetch_eth_price_usd()
     except Exception:
         usd = None
-    return {"usd": usd, "timestamp": int(time.time())}
+    payload = {"usd": usd, "timestamp": int(time.time())}
+    return _cache_set("eth-price", payload)
 
 
 @app.get("/block-number")
 async def block_number():
+    cached = _cache_get("block-number")
+    if cached is not None:
+        return cached
     try:
         n = await fetch_block_number()
     except Exception:
         n = None
-    return {"block_number": n, "timestamp": int(time.time())}
+    payload = {"block_number": n, "timestamp": int(time.time())}
+    return _cache_set("block-number", payload)
 
 
 @app.get("/gas-predict")

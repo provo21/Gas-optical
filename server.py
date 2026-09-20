@@ -74,9 +74,7 @@ routes = {
                 "properties": {},
                 "additionalProperties": False,
             },
-            output=OutputConfig(
-                example={"usd": 3450.12, "timestamp": 1710000000}
-            ),
+            output=OutputConfig(example={"usd": 3450.12, "timestamp": 1710000000}),
         ),
     ),
     "GET /block-number": RouteConfig(
@@ -96,9 +94,7 @@ routes = {
                 "properties": {},
                 "additionalProperties": False,
             },
-            output=OutputConfig(
-                example={"block_number": 12345678, "timestamp": 1710000000}
-            ),
+            output=OutputConfig(example={"block_number": 12345678, "timestamp": 1710000000}),
         ),
     ),
     "GET /gas-predict": RouteConfig(
@@ -129,12 +125,47 @@ routes = {
             ),
         ),
     ),
+    "GET /whale-watch": RouteConfig(
+        accepts=[
+            PaymentOption(
+                scheme="exact", pay_to=PAY_TO, price="$0.001", network=NETWORK
+            )
+        ],
+        mime_type="application/json",
+        description="Call this when an agent needs to detect large whale transfers on Base above one thousand ETH equivalent to spot accumulation, rotation, or exit signals before trading.",
+        service_name="Base Whale Watch",
+        tags=["whale", "base", "on-chain", "intelligence", "transfers", "defi"],
+        extensions=declare_discovery_extension(
+            input={},
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            output=OutputConfig(
+                example={
+                    "threshold_eth": 1000.0,
+                    "transfers": [
+                        {
+                            "tx_hash": "0xabc123",
+                            "from": "0x1111...",
+                            "to": "0x2222...",
+                            "value_eth": 2500.5,
+                            "token": "ETH",
+                        }
+                    ],
+                    "count": 1,
+                    "timestamp": 1710000000,
+                }
+            ),
+        ),
+    ),
 }
 
 app = FastAPI(
-    title="Multi-Chain Gas Oracle",
-    description="Live gas prices across Base, Ethereum, Arbitrum, and Optimism, plus ETH price, block number, and gas prediction. Paid via x402 on Base mainnet.",
-    version="1.4.0",
+    title="Multi-Chain Gas Oracle & Whale Watch",
+    description="Live gas prices across Base, Ethereum, Arbitrum, and Optimism, plus ETH price, block number, gas prediction, and large Base whale transfers. Paid via x402 on Base mainnet.",
+    version="1.5.0",
     contact={"email": "gas@optical.example"},
 )
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
@@ -152,6 +183,11 @@ GAS_HISTORY: deque = deque(maxlen=60)  # ~last 60 samples
 # Short-lived response cache so agents get sub-200ms replies without hammering RPCs.
 CACHE_TTL = 8  # seconds
 _cache: dict = {}
+
+# Known exchange / liquidity hot wallets on Base to filter noise.
+KNOWN_WHALE_WALLETS = {
+    "0x0000000000000000000000000000000000000000",
+}
 
 
 def _cache_get(key: str):
@@ -208,6 +244,36 @@ async def fetch_base_fee_gwei() -> float | None:
         return int(base_fee, 16) / 1e9
     except Exception:
         return None
+
+
+async def fetch_whale_transfers(threshold_eth: float = 1000.0, limit: int = 20) -> list:
+    """Scan recent Base blocks for large native ETH transfers above threshold."""
+    payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", True], "id": 1}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(CHAINS["base"], json=payload)
+        resp.raise_for_status()
+        block = resp.json().get("result") or {}
+
+    transfers = []
+    for tx in block.get("transactions", []):
+        if not isinstance(tx, dict):
+            continue
+        value_wei = int(tx.get("value", "0x0"), 16)
+        value_eth = value_wei / 1e18
+        if value_eth < threshold_eth:
+            continue
+        transfers.append(
+            {
+                "tx_hash": tx.get("hash"),
+                "from": tx.get("from"),
+                "to": tx.get("to"),
+                "value_eth": round(value_eth, 4),
+                "token": "ETH",
+            }
+        )
+        if len(transfers) >= limit:
+            break
+    return transfers
 
 
 @app.get("/gas")
@@ -297,6 +363,25 @@ async def gas_predict():
     }
 
 
+@app.get("/whale-watch")
+async def whale_watch():
+    """Return large native ETH transfers on the latest Base block."""
+    cached = _cache_get("whale-watch")
+    if cached is not None:
+        return cached
+    try:
+        transfers = await fetch_whale_transfers(threshold_eth=1000.0, limit=20)
+    except Exception:
+        transfers = []
+    payload = {
+        "threshold_eth": 1000.0,
+        "transfers": transfers,
+        "count": len(transfers),
+        "timestamp": int(time.time()),
+    }
+    return _cache_set("whale-watch", payload, ttl=15)
+
+
 @app.get("/.well-known/x402")
 async def well_known_x402():
     base = os.environ.get("PUBLIC_URL", "https://gas-optical-production-30aa.up.railway.app")
@@ -307,8 +392,9 @@ async def well_known_x402():
             f"{base}/eth-price",
             f"{base}/block-number",
             f"{base}/gas-predict",
+            f"{base}/whale-watch",
         ],
-        "instructions": "Pay $0.0001 USDC on Base for gas/price/block; $0.0005 for gas prediction. See PAYMENT-REQUIRED header.",
+        "instructions": "Pay $0.0001 USDC on Base for gas/price/block; $0.0005 for gas prediction; $0.001 for whale-watch. See PAYMENT-REQUIRED header.",
     }
     return JSONResponse(manifest)
 

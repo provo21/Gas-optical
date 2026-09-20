@@ -15,3 +15,4 @@ signal_broad: python agents/signal_broadcaster.py
 payer_track: python agents/payer_tracker.py
 churn_det: python agents/churn_detector.py
 reengage: python agents/reengagement.py
+whale_alert: python agents/whale_alert.py

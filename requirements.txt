@@ -1,0 +1,4 @@
+cdp-sdk
+x402
+web3
+uvicorn

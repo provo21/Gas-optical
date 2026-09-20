@@ -39,8 +39,6 @@ routes = {
         service_name="Base Gas Oracle",
         tags=["gas", "base", "oracle", "ethereum"],
         extensions=declare_discovery_extension(
-            service_name="Base Gas Oracle",
-            tags=["gas", "base", "oracle", "ethereum"],
             input={},
             input_schema={
                 "type": "object",
@@ -63,8 +61,6 @@ routes = {
         service_name="ETH Price Feed",
         tags=["price", "eth", "base", "coingecko"],
         extensions=declare_discovery_extension(
-            service_name="ETH Price Feed",
-            tags=["price", "eth", "base", "coingecko"],
             input={},
             input_schema={
                 "type": "object",
@@ -87,8 +83,6 @@ routes = {
         service_name="Base Block Number",
         tags=["block", "base", "chain", "ethereum"],
         extensions=declare_discovery_extension(
-            service_name="Base Block Number",
-            tags=["block", "base", "chain", "ethereum"],
             input={},
             input_schema={
                 "type": "object",

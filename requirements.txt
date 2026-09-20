@@ -2,3 +2,4 @@ cdp-sdk
 x402[evm,svm,fastapi,extensions]
 uvicorn
 httpx
+apscheduler

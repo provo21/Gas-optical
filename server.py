@@ -1,6 +1,7 @@
 # server.py
 import os
 import time
+from collections import deque
 
 import httpx
 from cdp.x402 import create_facilitator_config
@@ -94,17 +95,48 @@ routes = {
             ),
         ),
     ),
+    "GET /gas-predict": RouteConfig(
+        accepts=[
+            PaymentOption(
+                scheme="exact", pay_to=PAY_TO, price="$0.0005", network=NETWORK
+            )
+        ],
+        mime_type="application/json",
+        description="Forecast of Base gas price direction over the next hour based on recent block gas usage and base fee trend. Premium prediction endpoint.",
+        service_name="Base Gas Predictor",
+        tags=["gas", "base", "prediction", "forecast", "oracle"],
+        extensions=declare_discovery_extension(
+            input={},
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            output=OutputConfig(
+                example={
+                    "current_gwei": 12.4,
+                    "predicted_gwei_1h": 14.1,
+                    "trend": "up",
+                    "confidence": 0.62,
+                    "timestamp": 1710000000,
+                }
+            ),
+        ),
+    ),
 }
 
 app = FastAPI(
     title="Base Gas Oracle",
-    description="Live Base gas price, ETH price, and block number. Paid via x402 on Base mainnet.",
-    version="1.1.0",
+    description="Live Base gas price, ETH price, block number, and gas prediction. Paid via x402 on Base mainnet.",
+    version="1.2.0",
     contact={"email": "gas@optical.example"},
 )
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 BASE_RPC = "https://mainnet.base.org"
+
+# In-memory ring buffer of recent gas samples for trend prediction.
+GAS_HISTORY: deque = deque(maxlen=60)  # ~last 60 samples
 
 
 async def fetch_gas_gwei() -> float:
@@ -132,10 +164,26 @@ async def fetch_block_number() -> int:
         return int(resp.json()["result"], 16)
 
 
+async def fetch_base_fee_gwei() -> float | None:
+    """Return the latest base fee in gwei, if the node exposes it."""
+    payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(BASE_RPC, json=payload)
+            resp.raise_for_status()
+            base_fee = resp.json().get("result", {}).get("baseFeePerGas")
+        if base_fee is None:
+            return None
+        return int(base_fee, 16) / 1e9
+    except Exception:
+        return None
+
+
 @app.get("/gas")
 async def gas():
     try:
         gwei = await fetch_gas_gwei()
+        GAS_HISTORY.append({"t": time.time(), "gwei": gwei})
     except Exception:
         gwei = None
     return {"gas_gwei": gwei, "timestamp": int(time.time())}
@@ -159,13 +207,61 @@ async def block_number():
     return {"block_number": n, "timestamp": int(time.time())}
 
 
+@app.get("/gas-predict")
+async def gas_predict():
+    """Forecast Base gas direction over the next hour from recent samples."""
+    try:
+        current = await fetch_gas_gwei()
+        GAS_HISTORY.append({"t": time.time(), "gwei": current})
+        base_fee = await fetch_base_fee_gwei()
+    except Exception:
+        current = None
+        base_fee = None
+
+    samples = list(GAS_HISTORY)
+    if len(samples) >= 3 and current is not None:
+        recent = [s["gwei"] for s in samples[-5:]]
+        older = [s["gwei"] for s in samples[:-5]] or recent
+        avg_recent = sum(recent) / len(recent)
+        avg_older = sum(older) / len(older)
+        delta = avg_recent - avg_older
+        # Simple linear extrapolation scaled to a one-hour horizon.
+        predicted = max(0.0, current + delta * 2)
+        if predicted > current * 1.05:
+            trend = "up"
+        elif predicted < current * 0.95:
+            trend = "down"
+        else:
+            trend = "flat"
+        confidence = min(0.85, 0.4 + 0.1 * len(samples))
+    else:
+        predicted = current
+        trend = "unknown"
+        confidence = 0.2
+
+    return {
+        "current_gwei": current,
+        "base_fee_gwei": base_fee,
+        "predicted_gwei_1h": round(predicted, 4) if predicted is not None else None,
+        "trend": trend,
+        "confidence": round(confidence, 2),
+        "samples_used": len(samples),
+        "timestamp": int(time.time()),
+    }
+
+
 @app.get("/.well-known/x402")
 async def well_known_x402():
     base = os.environ.get("PUBLIC_URL", "https://gas-optical-production-30aa.up.railway.app")
     manifest = {
         "version": 1,
-        "resources": [f"{base}/gas", f"{base}/eth-price", f"{base}/block-number"],
-        "instructions": "Pay $0.0001 USDC on Base to access live gas price, ETH price, or block number. See PAYMENT-REQUIRED header.",
+        "resources": [
+            f"{base}/gas",
+            f"{base}/eth-price",
+            f"{base}/block-number",
+            f"{base}/gas-predict",
+        ],
+        "instructions": "Pay $0.0001 USDC on Base for gas/price/block; $0.0005 for gas prediction. See PAYMENT-REQUIRED header.",
     }
     return JSONResponse(manifest)
 

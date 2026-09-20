@@ -37,6 +37,12 @@ routes = {
         mime_type="application/json",
         description="Live Base gas price in gwei",
         extensions=declare_discovery_extension(
+            input={},
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
             output=OutputConfig(
                 example={"gas_gwei": 12.4, "timestamp": 1710000000}
             ),

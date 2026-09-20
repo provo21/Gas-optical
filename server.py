@@ -36,9 +36,9 @@ routes = {
             )
         ],
         mime_type="application/json",
-        description="Live Base gas price in gwei, updated from public RPC. Cheap on-chain gas oracle for agents.",
-        service_name="Base Gas Oracle",
-        tags=["gas", "base", "oracle", "ethereum"],
+        description="Live gas prices in gwei across Base, Ethereum, Arbitrum, and Optimism. Multi-chain gas oracle for agents.",
+        service_name="Multi-Chain Gas Oracle",
+        tags=["gas", "base", "ethereum", "arbitrum", "optimism", "oracle", "multi-chain"],
         extensions=declare_discovery_extension(
             input={},
             input_schema={
@@ -47,7 +47,13 @@ routes = {
                 "additionalProperties": False,
             },
             output=OutputConfig(
-                example={"gas_gwei": 12.4, "timestamp": 1710000000}
+                example={
+                    "base": 12.4,
+                    "ethereum": 18.2,
+                    "arbitrum": 0.11,
+                    "optimism": 0.05,
+                    "timestamp": 1710000000,
+                }
             ),
         ),
     ),
@@ -126,23 +132,28 @@ routes = {
 }
 
 app = FastAPI(
-    title="Base Gas Oracle",
-    description="Live Base gas price, ETH price, block number, and gas prediction. Paid via x402 on Base mainnet.",
-    version="1.2.0",
+    title="Multi-Chain Gas Oracle",
+    description="Live gas prices across Base, Ethereum, Arbitrum, and Optimism, plus ETH price, block number, and gas prediction. Paid via x402 on Base mainnet.",
+    version="1.3.0",
     contact={"email": "gas@optical.example"},
 )
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
-BASE_RPC = "https://mainnet.base.org"
+CHAINS = {
+    "base": "https://mainnet.base.org",
+    "ethereum": "https://eth.llamarpc.com",
+    "arbitrum": "https://arb1.arbitrum.io/rpc",
+    "optimism": "https://mainnet.optimism.io",
+}
 
-# In-memory ring buffer of recent gas samples for trend prediction.
+# In-memory ring buffer of recent Base gas samples for trend prediction.
 GAS_HISTORY: deque = deque(maxlen=60)  # ~last 60 samples
 
 
-async def fetch_gas_gwei() -> float:
+async def fetch_gas_gwei(rpc: str) -> float:
     payload = {"jsonrpc": "2.0", "method": "eth_gasPrice", "params": [], "id": 1}
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(BASE_RPC, json=payload)
+        resp = await client.post(rpc, json=payload)
         resp.raise_for_status()
         wei = int(resp.json()["result"], 16)
     return wei / 1e9
@@ -159,7 +170,7 @@ async def fetch_eth_price_usd() -> float:
 async def fetch_block_number() -> int:
     payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(BASE_RPC, json=payload)
+        resp = await client.post(CHAINS["base"], json=payload)
         resp.raise_for_status()
         return int(resp.json()["result"], 16)
 
@@ -169,7 +180,7 @@ async def fetch_base_fee_gwei() -> float | None:
     payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(BASE_RPC, json=payload)
+            resp = await client.post(CHAINS["base"], json=payload)
             resp.raise_for_status()
             base_fee = resp.json().get("result", {}).get("baseFeePerGas")
         if base_fee is None:
@@ -181,12 +192,16 @@ async def fetch_base_fee_gwei() -> float | None:
 
 @app.get("/gas")
 async def gas():
-    try:
-        gwei = await fetch_gas_gwei()
-        GAS_HISTORY.append({"t": time.time(), "gwei": gwei})
-    except Exception:
-        gwei = None
-    return {"gas_gwei": gwei, "timestamp": int(time.time())}
+    result = {}
+    for name, rpc in CHAINS.items():
+        try:
+            gwei = await fetch_gas_gwei(rpc)
+            result[name] = round(gwei, 4)
+            if name == "base":
+                GAS_HISTORY.append({"t": time.time(), "gwei": gwei})
+        except Exception:
+            result[name] = None
+    return {**result, "timestamp": int(time.time())}
 
 
 @app.get("/eth-price")
@@ -211,7 +226,7 @@ async def block_number():
 async def gas_predict():
     """Forecast Base gas direction over the next hour from recent samples."""
     try:
-        current = await fetch_gas_gwei()
+        current = await fetch_gas_gwei(CHAINS["base"])
         GAS_HISTORY.append({"t": time.time(), "gwei": current})
         base_fee = await fetch_base_fee_gwei()
     except Exception:

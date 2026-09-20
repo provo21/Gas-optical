@@ -2,3 +2,4 @@ fastapi
 cdp-sdk 
 x402 
 uvicorn
+httpx

@@ -1,4 +1,4 @@
 cdp-sdk
-x402[evm,svm,fastapi]
+x402[evm,svm,fastapi,extensions]
 uvicorn
 httpx

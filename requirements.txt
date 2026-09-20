@@ -1,5 +1,3 @@
-fastapi 
-cdp-sdk 
-x402 
+cdp-sdk
+x402
 uvicorn
-httpx

@@ -5,7 +5,7 @@ import time
 import httpx
 from cdp.x402 import create_facilitator_config
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from x402.extensions.bazaar import (
     OutputConfig,
     bazaar_resource_server_extension,
@@ -18,7 +18,7 @@ from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
 NETWORK = "eip155:8453"  # Base mainnet
-PAY_TO = os.environ["X402_PAY_TO"]
+PAY_TO = os.environ.get("X402_PAY_TO", "0x0000000000000000000000000000000000000000")
 
 # create_facilitator_config() reads your CDP API key and authenticates verify
 # and settle against the CDP Facilitator. It does not create a receiving wallet.
@@ -168,11 +168,6 @@ async def well_known_x402():
         "instructions": "Pay $0.0001 USDC on Base to access live gas price, ETH price, or block number. See PAYMENT-REQUIRED header.",
     }
     return JSONResponse(manifest)
-
-
-@app.get("/favicon.ico")
-async def favicon():
-    return FileResponse("favicon.ico")
 
 
 if __name__ == "__main__":

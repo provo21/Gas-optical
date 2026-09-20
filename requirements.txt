@@ -1,4 +1,0 @@
-x402
-web3
-fastapi
-uvicorn

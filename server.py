@@ -36,7 +36,7 @@ routes = {
             )
         ],
         mime_type="application/json",
-        description="Live gas prices in gwei across Base, Ethereum, Arbitrum, and Optimism. Multi-chain gas oracle for agents.",
+        description="Use this before sending a transaction on Base, Ethereum, Arbitrum, or Optimism to check live gas prices in gwei across all four chains.",
         service_name="Multi-Chain Gas Oracle",
         tags=["gas", "base", "ethereum", "arbitrum", "optimism", "oracle", "multi-chain"],
         extensions=declare_discovery_extension(
@@ -64,7 +64,7 @@ routes = {
             )
         ],
         mime_type="application/json",
-        description="Live ETH price in USD from CoinGecko public API. Cheap price feed for agents.",
+        description="Call this when an agent needs the current ETH price in USD to size a trade, convert gas cost to dollars, or value a position.",
         service_name="ETH Price Feed",
         tags=["price", "eth", "base", "coingecko"],
         extensions=declare_discovery_extension(
@@ -86,7 +86,7 @@ routes = {
             )
         ],
         mime_type="application/json",
-        description="Latest Base block number from public RPC. Cheap chain-state feed for agents.",
+        description="Use this to get the latest Base block number for timing, syncing, or checking chain progress before submitting a transaction.",
         service_name="Base Block Number",
         tags=["block", "base", "chain", "ethereum"],
         extensions=declare_discovery_extension(
@@ -108,7 +108,7 @@ routes = {
             )
         ],
         mime_type="application/json",
-        description="Forecast of Base gas price direction over the next hour based on recent block gas usage and base fee trend. Premium prediction endpoint.",
+        description="Call this to time transactions when Base gas is about to spike or drop over the next hour, based on recent block gas usage and base fee trend.",
         service_name="Base Gas Predictor",
         tags=["gas", "base", "prediction", "forecast", "oracle"],
         extensions=declare_discovery_extension(

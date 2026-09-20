@@ -1,3 +1,4 @@
-cdp-sdk
-x402
+fastapi 
+cdp-sdk 
+x402 
 uvicorn

@@ -5,6 +5,12 @@ import time
 import httpx
 from cdp.x402 import create_facilitator_config
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from x402.extensions.bazaar import (
+    OutputConfig,
+    bazaar_resource_server_extension,
+    declare_discovery_extension,
+)
 from x402.http import HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
@@ -18,6 +24,8 @@ PAY_TO = os.environ["X402_PAY_TO"]
 # and settle against the CDP Facilitator. It does not create a receiving wallet.
 server = x402ResourceServer(HTTPFacilitatorClient(create_facilitator_config()))
 server.register(NETWORK, ExactEvmServerScheme())
+# Enriches each route's Bazaar declaration with its HTTP method and path params.
+server.register_extension(bazaar_resource_server_extension)
 
 routes = {
     "GET /gas": RouteConfig(
@@ -28,10 +36,15 @@ routes = {
         ],
         mime_type="application/json",
         description="Live Base gas price in gwei",
+        extensions=declare_discovery_extension(
+            output=OutputConfig(
+                example={"gas_gwei": 12.4, "timestamp": 1710000000}
+            ),
+        ),
     ),
 }
 
-app = FastAPI()
+app = FastAPI(contact={"email": "gas@optical.example"})
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 BASE_RPC = "https://mainnet.base.org"
@@ -53,6 +66,11 @@ async def gas():
     except Exception:
         gwei = None
     return {"gas_gwei": gwei, "timestamp": int(time.time())}
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse("favicon.ico")
 
 
 if __name__ == "__main__":

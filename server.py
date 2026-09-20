@@ -5,7 +5,7 @@ import time
 import httpx
 from cdp.x402 import create_facilitator_config
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from x402.extensions.bazaar import (
     OutputConfig,
     bazaar_resource_server_extension,
@@ -35,8 +35,12 @@ routes = {
             )
         ],
         mime_type="application/json",
-        description="Live Base gas price in gwei",
+        description="Live Base gas price in gwei, updated from public RPC. Cheap on-chain gas oracle for agents.",
+        service_name="Base Gas Oracle",
+        tags=["gas", "base", "oracle", "ethereum"],
         extensions=declare_discovery_extension(
+            service_name="Base Gas Oracle",
+            tags=["gas", "base", "oracle", "ethereum"],
             input={},
             input_schema={
                 "type": "object",
@@ -50,7 +54,12 @@ routes = {
     ),
 }
 
-app = FastAPI(contact={"email": "gas@optical.example"})
+app = FastAPI(
+    title="Base Gas Oracle",
+    description="Live Base gas price in gwei. Paid via x402 on Base mainnet.",
+    version="1.0.0",
+    contact={"email": "gas@optical.example"},
+)
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 BASE_RPC = "https://mainnet.base.org"
@@ -72,6 +81,17 @@ async def gas():
     except Exception:
         gwei = None
     return {"gas_gwei": gwei, "timestamp": int(time.time())}
+
+
+@app.get("/.well-known/x402")
+async def well_known_x402():
+    base = os.environ.get("PUBLIC_URL", "https://gas-optical-production-30aa.up.railway.app")
+    manifest = {
+        "version": 1,
+        "resources": [f"{base}/gas"],
+        "instructions": "Pay $0.001 USDC on Base to access live gas price. See PAYMENT-REQUIRED header.",
+    }
+    return JSONResponse(manifest)
 
 
 @app.get("/favicon.ico")

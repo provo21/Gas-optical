@@ -12,3 +12,6 @@ cheap_finder: python agents/cheapest_finder.py
 trend_watch: python agents/trend_watcher.py
 comp_pricer: python agents/competitor_pricer.py
 signal_broad: python agents/signal_broadcaster.py
+payer_track: python agents/payer_tracker.py
+churn_det: python agents/churn_detector.py
+reengage: python agents/reengagement.py

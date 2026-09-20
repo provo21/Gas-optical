@@ -9,7 +9,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-NETWORK = "eip155:8453"  # Base mainnet
+NETWORK = "eip155:8452"  # Base mainnet
 PAY_TO = os.environ # create_facilitator_config() reads your CDP API key and authenticates verify
 # and settle against the CDP Facilitator. It does not create a receiving wallet.
 server = x402ResourceServer(HTTPFacilitatorClient(create_facilitator_config()))

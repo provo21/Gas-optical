@@ -6,6 +6,7 @@ from collections import deque
 import httpx
 from cdp.x402 import create_facilitator_config
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from x402.extensions.bazaar import (
     OutputConfig,
@@ -168,6 +169,17 @@ app = FastAPI(
     version="1.5.0",
     contact={"email": "gas@optical.example"},
 )
+
+# Allow the x402 browser payment widget to read PAYMENT-REQUIRED and related headers.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["PAYMENT-REQUIRED", "PAYMENT-RESPONSE", "PAYMENT-REQUIRED-VERSION"],
+)
+
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 CHAINS = {

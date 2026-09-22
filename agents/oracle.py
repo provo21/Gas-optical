@@ -1,6 +1,7 @@
 import time
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 
 LOG_DIR = os.environ.get("ORACLE_LOG_DIR", "/tmp/oracle_logs")
@@ -47,6 +48,15 @@ def read_agent_logs(agent):
         return None
 
 
+def write_agent_log(agent, data):
+    path = os.path.join(LOG_DIR, f"{agent}.json")
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Oracle: failed to write log for {agent}: {e}", flush=True)
+
+
 def synthesize():
     now = datetime.now(timezone.utc).isoformat()
     findings = {}
@@ -82,12 +92,39 @@ def synthesize():
     return summary
 
 
+def nudge_agents():
+    """Oracle's management pass: check for idle agents and restart them."""
+    restarted = []
+    for agent in AGENTS:
+        data = read_agent_logs(agent)
+        idle = data is None or (isinstance(data, dict) and data.get("status") in (None, "no_data", "idle", "error"))
+        if idle:
+            script = f"agents/{agent}.py"
+            if os.path.exists(script):
+                try:
+                    subprocess.Popen(
+                        ["python", script],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                    restarted.append(agent)
+                    write_agent_log(agent, {"status": "nudged", "ts": int(time.time())})
+                except Exception as e:
+                    print(f"Oracle: failed to nudge {agent}: {e}", flush=True)
+    if restarted:
+        print(json.dumps({"oracle_action": "nudged_idle_agents", "agents": restarted}), flush=True)
+    else:
+        print(json.dumps({"oracle_action": "all_agents_active"}), flush=True)
+
+
 def main():
     ensure_log_dir()
     print(f"Oracle synthesis agent starting. Interval={INTERVAL}s", flush=True)
     while True:
         try:
             synthesize()
+            nudge_agents()
         except Exception as e:
             print(f"Oracle error: {e}", flush=True)
         time.sleep(INTERVAL)

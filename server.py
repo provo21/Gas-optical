@@ -7,6 +7,7 @@ import httpx
 from cdp.x402 import create_facilitator_config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from x402.extensions.bazaar import (
     OutputConfig,
@@ -200,6 +201,61 @@ _cache: dict = {}
 KNOWN_WHALE_WALLETS = {
     "0x0000000000000000000000000000000000000000",
 }
+
+# x402 payment metadata for the OpenAPI spec (x402scan discovery).
+PAID_PATHS = {
+    "/gas": {"amount": "0.0001", "asset": "USDC", "network": "base", "summary": "Live multi-chain gas prices"},
+    "/eth-price": {"amount": "0.0001", "asset": "USDC", "network": "base", "summary": "Live ETH price in USD"},
+    "/block-number": {"amount": "0.0001", "asset": "USDC", "network": "base", "summary": "Latest Base block number"},
+    "/gas-predict": {"amount": "0.0005", "asset": "USDC", "network": "base", "summary": "One-hour Base gas forecast"},
+    "/whale-watch": {"amount": "0.001", "asset": "USDC", "network": "base", "summary": "Large Base whale transfers"},
+}
+
+PAYMENT_402 = {
+    "description": "Payment required. See PAYMENT-REQUIRED header for the x402 payment challenge.",
+    "headers": {
+        "PAYMENT-REQUIRED": {
+            "description": "x402 payment challenge (base64-encoded JSON)",
+            "schema": {"type": "string"},
+        }
+    },
+}
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    schema.setdefault("info", {})["x-guidance"] = (
+        "Use GET /gas before sending a transaction on Base, Ethereum, Arbitrum, or Optimism. "
+        "Use GET /gas-predict to time transactions when gas is about to spike or drop. "
+        "Use GET /whale-watch to detect large Base transfers. "
+        "All paid routes require $0.0001-$0.001 USDC on Base via x402."
+    )
+    for path, op in schema.get("paths", {}).items():
+        if path not in PAID_PATHS:
+            continue
+        meta = PAID_PATHS[path]
+        for method, operation in op.items():
+            if method not in ("get", "post", "put", "delete", "patch"):
+                continue
+            operation["x-payment-info"] = {
+                "price": meta["amount"],
+                "asset": meta["asset"],
+                "network": meta["network"],
+                "protocol": "x402",
+            }
+            operation.setdefault("responses", {})["402"] = PAYMENT_402
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
 
 
 def _cache_get(key: str):

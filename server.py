@@ -1,4 +1,5 @@
 # server.py
+import json
 import os
 import time
 from collections import deque
@@ -22,6 +23,11 @@ from x402.server import x402ResourceServer
 
 NETWORK = "eip155:8453"  # Base mainnet
 PAY_TO = os.environ.get("X402_PAY_TO", "0x0000000000000000000000000000000000000000")
+PUBLIC_URL = os.environ.get(
+    "PUBLIC_URL", "https://gas-optical-production-30aa.up.railway.app"
+)
+ORACLE_LOG_DIR = os.environ.get("ORACLE_LOG_DIR", "/tmp/oracle_logs")
+ORACLE_SUMMARY_FILE = os.path.join(ORACLE_LOG_DIR, "daily_summary.json")
 
 # create_facilitator_config() reads your CDP API key and authenticates verify
 # and settle against the CDP Facilitator. It does not create a receiving wallet.
@@ -166,8 +172,8 @@ routes = {
 
 app = FastAPI(
     title="Multi-Chain Gas Oracle & Whale Watch",
-    description="Live gas prices across Base, Ethereum, Arbitrum, and Optimism, plus ETH price, block number, gas prediction, and large Base whale transfers. Paid via x402 on Base mainnet.",
-    version="1.5.0",
+    description="Live gas prices across Base, Ethereum, Arbitrum, and Optimism, plus ETH price, block number, gas prediction, and large Base whale transfers. Paid via x402 on Base mainnet. Free discovery at GET /oracle.",
+    version="1.6.0",
     contact={"email": "gas@optical.example"},
 )
 
@@ -232,13 +238,15 @@ def custom_openapi():
         routes=app.routes,
     )
     schema.setdefault("info", {})["x-guidance"] = (
-        "Use GET /gas before sending a transaction on Base, Ethereum, Arbitrum, or Optimism. "
-        "Use GET /gas-predict to time transactions when gas is about to spike or drop. "
-        "Use GET /whale-watch to detect large Base transfers. "
-        "All paid routes require $0.0001-$0.001 USDC on Base via x402."
+        "Start with free GET /oracle for catalog and agent status. "
+        "Then pay via x402 on Base to call GET /gas, GET /eth-price, GET /block-number, "
+        "GET /gas-predict, or GET /whale-watch."
     )
     for path, op in schema.get("paths", {}).items():
         if path not in PAID_PATHS:
+            for method, operation in op.items():
+                if method in ("get", "post", "put", "delete", "patch"):
+                    operation["security"] = []
             continue
         meta = PAID_PATHS[path]
         for method, operation in op.items():
@@ -450,19 +458,50 @@ async def whale_watch():
     return _cache_set("whale-watch", payload, ttl=15)
 
 
+@app.get("/oracle")
+async def oracle():
+    """Free discovery endpoint. Catalog + last Oracle sidecar if present."""
+    sidecar = None
+    try:
+        with open(ORACLE_SUMMARY_FILE) as f:
+            sidecar = json.load(f)
+    except Exception:
+        sidecar = None
+
+    return {
+        "free": True,
+        "name": "Multi-Chain Gas Oracle & Whale Watch",
+        "network": "base",
+        "pay_asset": "USDC",
+        "guidance": (
+            "This route is free. Live data is paid via x402 on Base. "
+            "Call GET /gas ($0.0001), GET /eth-price ($0.0001), GET /block-number ($0.0001), "
+            "GET /gas-predict ($0.0005), or GET /whale-watch ($0.001)."
+        ),
+        "paid_endpoints": [
+            {"method": "GET", "path": "/gas", "url": f"{PUBLIC_URL}/gas", "price_usd": "0.0001"},
+            {"method": "GET", "path": "/eth-price", "url": f"{PUBLIC_URL}/eth-price", "price_usd": "0.0001"},
+            {"method": "GET", "path": "/block-number", "url": f"{PUBLIC_URL}/block-number", "price_usd": "0.0001"},
+            {"method": "GET", "path": "/gas-predict", "url": f"{PUBLIC_URL}/gas-predict", "price_usd": "0.0005"},
+            {"method": "GET", "path": "/whale-watch", "url": f"{PUBLIC_URL}/whale-watch", "price_usd": "0.001"},
+        ],
+        "oracle_sidecar": sidecar,
+        "timestamp": int(time.time()),
+    }
+
+
 @app.get("/.well-known/x402")
 async def well_known_x402():
-    base = os.environ.get("PUBLIC_URL", "https://gas-optical-production-30aa.up.railway.app")
     manifest = {
         "version": 1,
         "resources": [
-            f"{base}/gas",
-            f"{base}/eth-price",
-            f"{base}/block-number",
-            f"{base}/gas-predict",
-            f"{base}/whale-watch",
+            f"{PUBLIC_URL}/gas",
+            f"{PUBLIC_URL}/eth-price",
+            f"{PUBLIC_URL}/block-number",
+            f"{PUBLIC_URL}/gas-predict",
+            f"{PUBLIC_URL}/whale-watch",
         ],
-        "instructions": "Pay $0.0001 USDC on Base for gas/price/block; $0.0005 for gas prediction; $0.001 for whale-watch. See PAYMENT-REQUIRED header.",
+        "instructions": "Start free at GET /oracle. Pay $0.0001 USDC on Base for gas/price/block; $0.0005 for gas prediction; $0.001 for whale-watch. See PAYMENT-REQUIRED header.",
     }
     return JSONResponse(manifest)
 
